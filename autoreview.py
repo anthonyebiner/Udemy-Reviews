@@ -1,10 +1,10 @@
-import atexit
+import traceback
+import sys
 import time
+from datetime import datetime
 import os
 from random import randrange
 
-from langdetect import detect
-from langdetect.lang_detect_exception import LangDetectException
 from selenium.common.exceptions import NoSuchElementException
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
@@ -18,6 +18,8 @@ from skip import classes_to_skip
 
 from googletrans import Translator
 
+import yagmail
+
 
 def deEmojify(inputString):
     return inputString.encode('ascii', 'ignore').decode('ascii')
@@ -26,13 +28,16 @@ def deEmojify(inputString):
 class UdemyReviews:
     def __init__(self, browser):
         os.chdir(os.path.dirname(__file__))
+        self.start_date = datetime.now()
+        self.yag = yagmail.SMTP(auths.gmail_user, auths.gmail_pass)
         try:
             os.remove(os.getcwd()+'/lock.txt')
-            print('lock file removed')
+            # print('lock file removed')
         except FileNotFoundError:
-            print('lock file not found')
+            # print('lock file not found')
+            pass
         self.translator = Translator(service_urls=['translate.google.com'])
-        atexit.register(self.handle_exit)
+        sys.excepthook = self.handle_exit
         self.review_data = {}
         self.initialize_dict(self.review_data)
         self.browser = browser
@@ -43,19 +48,32 @@ class UdemyReviews:
         self.browser.find_element_by_css_selector('#submit-id-submit').click()
         time.sleep(3)
 
-    def handle_exit(self):
-        self.browser.close()
-        self.browser.quit()
-        print()
-        print('Total reviews processed:', self.review_data['total_reviews'])
-        print('Total reviews responded:', self.review_data['total_answered'])
-        print('Total reviews skipped:', self.review_data['total_skipped'])
-        print('Total reviews reported:', self.review_data['total_reported'])
-        print('\nTotal star count:')
+    def handle_exit(self, exctype=None, value=None, tb=None):
+        try:
+            self.browser.close()
+            self.browser.quit()
+        except:
+            pass
+        subject = "Udemy Reviews processed " + str(self.start_date)
+        if exctype:
+            subject += " w/ error"
+        text = ""
+        text += 'Processed ' + str(self.review_data['total_reviews']) + ' reviews'
+        text += '\n' + 'Total reviews responded: ' + str(self.review_data['total_answered'])
+        text += '\n' + 'Total reviews skipped: ' + str(self.review_data['total_skipped'])
+        text += '\n' + '\nTotal star count:'
         for star, num in self.review_data['total_stars'].items():
-            print(str(star) + ':  ' + str(num))
-        print('\nTotal survey count:')
-        print(self.survey_to_string(self.review_data['total_survey']))
+            text += '\n' + str(star) + ':  ' + str(num)
+        text += '\n' + '\nTotal survey count (negative, neutral, positive):'
+        text += '\n' + str(self.survey_to_string(self.review_data['total_survey']))
+        if exctype:
+            text += '\n \n Ended with an error: \n'
+            error_strings = traceback.format_exception(exctype, value, tb)
+            for string in error_strings:
+                text += string
+        print(subject)
+        print(text)
+        self.yag.send(to='anthonyebiner+udemybot@gmail.com', subject=subject, contents=text)
 
     def survey_to_string(self, survey):
         string = ""
@@ -104,9 +122,11 @@ class UdemyReviews:
         return self.browser.find_elements_by_class_name('mb20')
 
     def get_num_stars(self, review):
-        stars = review.find_element_by_css_selector("div[data-purpose='star-rating-shell'").get_attribute('aria-label')
-        print(stars)
-        return float(stars.split(' ')[1])
+        stars = float(review.find_element_by_css_selector("div[data-purpose='star-rating-shell'").get_attribute('aria-label').split(' ')[1])
+        if stars < 1:
+            stars = 1
+        # print(str(stars) + ' out of 5 stars')
+        return stars
 
     def get_review_text(self, review):
         try:
@@ -149,10 +169,10 @@ class UdemyReviews:
             for review in self.get_reviews():
                 self.scroll_shim(review)
 
-                print('---')
+                # print('---')
 
                 course_name = self.get_course_name(review)
-                print(course_name)
+                # print(course_name)
                 try:
                     first_name = self.get_first_name(review)
                 except NoSuchElementException:
@@ -167,16 +187,16 @@ class UdemyReviews:
 
                 for n, survey in enumerate(survey_responses):
                     self.review_data['total_survey'][n][survey] += 1
-                print(survey_responses)
+                # print(survey_responses)
 
-                if not review_text:
-                    print('No text')
-                else:
-                    print(review_text)
+                # if not review_text:
+                    # print('No text')
+                # else:
+                    # print(review_text)
 
                 if review_text and stars < 4 or course_name in classes_to_skip:
                     self.review_data['total_skipped'] += 1
-                    print('Skipped')
+                    # print('Skipped')
                     continue
 
                 try:
@@ -186,8 +206,8 @@ class UdemyReviews:
 
                 if lang not in languages:
                     self.review_data['total_skipped'] += 1
-                    print('Language ({}) not Recognized'.format(lang))
-                    print('Skipped')
+                    # print('Language ({}) not Recognized'.format(lang))
+                    # print('Skipped')
                     if slow:
                         time.sleep(2)
                     continue
@@ -220,7 +240,7 @@ class UdemyReviews:
                         review.find_element_by_css_selector("textarea[class='form-control']").send_keys(
                             response)
                     else:
-                        print('Skipped')
+                        # print('Skipped')
                         self.review_data['total_skipped'] += 1
                         continue
 
@@ -231,7 +251,7 @@ class UdemyReviews:
 
                     if not test:
                         review.find_element_by_css_selector("button[data-purpose='post-response-button']").click()
-                        print('Response Posted ({})'.format(lang))
+                        # print('Response Posted ({})'.format(lang))
 
                     if slow:
                         time.sleep(randrange(1, 3))
@@ -243,10 +263,10 @@ class UdemyReviews:
 
                 except NoSuchElementException:
                     self.review_data['total_skipped'] += 1
-                    print('Already responded')
-                    print('Skipped')
+                    # print('Already responded')
+                    # print('Skipped')
 
             WebDriverWait(self.browser, 10).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, '.pagination-next'))).click()
-        print('Exiting')
+        # print('Exiting')
         self.handle_exit()
